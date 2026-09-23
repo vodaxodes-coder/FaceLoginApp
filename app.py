@@ -4,8 +4,7 @@ from PIL import Image, ImageOps
 from tensorflow.keras.models import load_model
 import json
 import io
-import os
-from google_auth_oauthlib.flow import Flow
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
@@ -86,85 +85,60 @@ def main():
         st.write("Securely upload reports and documents to Google Drive.")
         
         try:
-            oauth_json = json.loads(st.secrets["GOOGLE_OAUTH_JSON"])
-            redirect_uri = st.secrets["REDIRECT_URI"]
+            # 1. Load Bot Credentials behind the scenes
+            creds_json = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
             folder_id = st.secrets["DRIVE_FOLDER_ID"]
             
-            flow = Flow.from_client_config(
-                oauth_json,
-                scopes=['https://www.googleapis.com/auth/drive'],
-                redirect_uri=redirect_uri
+            creds = service_account.Credentials.from_service_account_info(
+                creds_json, 
+                scopes=['https://www.googleapis.com/auth/drive']
             )
+            drive_service = build('drive', 'v3', credentials=creds)
             
-            if "code" in st.query_params:
-                if os.path.exists("verifier.txt"):
-                    with open("verifier.txt", "r") as f:
-                        flow.code_verifier = f.read()
+            # 2. FILE UPLOADER
+            uploaded_file = st.file_uploader("Select a file to upload")
+            if uploaded_file is not None:
+                if st.button("Save to Drive"):
+                    with st.spinner("Uploading to Google Drive..."):
+                        file_bytes = uploaded_file.getvalue()
+                        file_metadata = {'name': uploaded_file.name, 'parents': [folder_id]}
+                        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=uploaded_file.type, resumable=True)
                         
-                flow.fetch_token(code=st.query_params["code"])
-                st.session_state["google_creds"] = flow.credentials
-                st.query_params.clear()
-                st.rerun()
-                
-            if "google_creds" not in st.session_state:
-                auth_url, _ = flow.authorization_url(prompt='consent')
-                
-                with open("verifier.txt", "w") as f:
-                    f.write(flow.code_verifier)
-                
-                st.info("You must link your Google Account to upload files.")
-                
-                st.link_button("🔐 Log in with Google", auth_url)
-                
-            else:
-                creds = st.session_state["google_creds"]
-                drive_service = build('drive', 'v3', credentials=creds)
-                
-                uploaded_file = st.file_uploader("Select a file to upload")
-                if uploaded_file is not None:
-                    if st.button("Save to Drive"):
-                        with st.spinner("Uploading to Google Drive..."):
-                            file_bytes = uploaded_file.getvalue()
-                            file_metadata = {'name': uploaded_file.name, 'parents': [folder_id]}
-                            media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=uploaded_file.type, resumable=True)
-                            
-                            drive_service.files().create(
-                                body=file_metadata, 
-                                media_body=media, 
-                                fields='id'
-                            ).execute()
-                            
-                            st.success(f"'{uploaded_file.name}' saved to Drive!")
-                            st.rerun()
+                        drive_service.files().create(
+                            body=file_metadata, 
+                            media_body=media, 
+                            fields='id'
+                        ).execute()
+                        
+                        st.success(f"'{uploaded_file.name}' saved to Drive!")
+                        st.rerun()
 
-                st.divider()
-                st.subheader("Saved Files")
-                
-                # Request webViewLink alongside the file ID and Name
-                results = drive_service.files().list(
-                    q=f"'{folder_id}' in parents and trashed=false",
-                    fields="files(id, name, webViewLink)"
-                ).execute()
-                
-                files = results.get('files', [])
-                
-                if not files:
-                    st.info("Your Google Drive folder is currently empty.")
-                else:
-                    for file_data in files:
-                        file_name = file_data['name']
-                        file_id = file_data['id']
-                        file_link = file_data.get('webViewLink', '#')
-                        
-                        # 3 columns for Name, View button, and Delete button
-                        col1, col2, col3 = st.columns([3, 1, 1])
-                        col1.write(f"📄 {file_name}")
-                        
-                        col2.link_button("View File", file_link)
-                        
-                        if col3.button("Delete", key=f"del_{file_id}"):
-                            drive_service.files().delete(fileId=file_id).execute()
-                            st.rerun()
+            st.divider()
+            st.subheader("Saved Files")
+            
+            # 3. Request webViewLink alongside the file ID and Name
+            results = drive_service.files().list(
+                q=f"'{folder_id}' in parents and trashed=false",
+                fields="files(id, name, webViewLink)"
+            ).execute()
+            
+            files = results.get('files', [])
+            
+            if not files:
+                st.info("Your Google Drive folder is currently empty.")
+            else:
+                for file_data in files:
+                    file_name = file_data['name']
+                    file_id = file_data['id']
+                    file_link = file_data.get('webViewLink', '#')
+                    
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    col1.write(f"📄 {file_name}")
+                    col2.link_button("View File", file_link)
+                    
+                    if col3.button("Delete", key=f"del_{file_id}"):
+                        drive_service.files().delete(fileId=file_id).execute()
+                        st.rerun()
 
         except Exception as e:
             st.error(f"⚠️ Drive connection error: {e}")
