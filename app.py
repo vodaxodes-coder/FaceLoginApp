@@ -31,7 +31,7 @@ def preprocess_image(image_data):
     return data
 
 def main():
-    st.set_page_config(page_title="Best Buy Secure Portal", layout="centered")
+    st.set_page_config(page_title="Secure Portal", layout="centered")
 
     # ==========================================
     #             SECURITY WALL
@@ -54,7 +54,6 @@ def main():
                 class_name = labels[index].strip()
                 confidence_score = prediction[0][index]
                 
-                # Make sure this matches your labels.txt!
                 TARGET_CLASS = "0 Class 1"  
                 
                 if TARGET_CLASS in class_name and confidence_score > 0.85:
@@ -83,7 +82,7 @@ def main():
     if st.session_state['authenticated']:
         st.sidebar.button("Log out", on_click=lambda: st.session_state.update({'authenticated': False}))
         
-        st.title("📁 Best Buy File Manager")
+        st.title("📁 File Manager")
         st.write("Securely upload reports and documents to Google Drive.")
         
         try:
@@ -117,11 +116,8 @@ def main():
                 
                 st.info("You must link your Google Account to upload files.")
                 
-                # 3. Custom button that opens in the SAME tab to prevent memory wipe
-                st.markdown(
-                    f'<a href="{auth_url}" target="_self" style="display: inline-block; padding: 10px 20px; background-color: #4285F4; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">🔐 Log in with Google</a>', 
-                    unsafe_allow_html=True
-                )
+                # 3. Standard button so Google opens safely in a new tab
+                st.link_button("🔐 Log in with Google", auth_url)
                 
             else:
                 creds = st.session_state["google_creds"]
