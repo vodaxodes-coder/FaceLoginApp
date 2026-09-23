@@ -152,6 +152,7 @@ def main():
                     redirect_uri=redirect_uri
                 )
                 
+                # 1. Handle returning from Google
                 if "code" in st.query_params:
                     if os.path.exists("verifier.txt"):
                         with open("verifier.txt", "r") as f:
@@ -162,8 +163,8 @@ def main():
                     st.query_params.clear()
                     st.rerun()
                     
-                if "google_creds" not in st.session_state:
-                    # access_type='offline' forces Google to generate a permanent refresh token
+                # 2. Handle creating the login link (using ELIF prevents overwriting)
+                elif "google_creds" not in st.session_state:
                     auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
                     
                     with open("verifier.txt", "w") as f:
@@ -171,7 +172,8 @@ def main():
                     
                     st.link_button("🔐 Log in to generate Permanent Key", auth_url)
                     
-                else:
+                # 3. Handle success and printing the key
+                elif "google_creds" in st.session_state:
                     creds = st.session_state["google_creds"]
                     st.success("✅ Success! Here is your permanent key:")
                     st.code(creds.to_json(), language="json")
