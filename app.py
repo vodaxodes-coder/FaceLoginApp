@@ -97,7 +97,6 @@ def main():
             )
             
             if "code" in st.query_params:
-                # 1. Retrieve the verifier from the physical text file
                 if os.path.exists("verifier.txt"):
                     with open("verifier.txt", "r") as f:
                         flow.code_verifier = f.read()
@@ -110,13 +109,11 @@ def main():
             if "google_creds" not in st.session_state:
                 auth_url, _ = flow.authorization_url(prompt='consent')
                 
-                # 2. Save the verifier to a physical file before clicking the link
                 with open("verifier.txt", "w") as f:
                     f.write(flow.code_verifier)
                 
                 st.info("You must link your Google Account to upload files.")
                 
-                # 3. Standard button so Google opens safely in a new tab
                 st.link_button("🔐 Log in with Google", auth_url)
                 
             else:
@@ -143,9 +140,10 @@ def main():
                 st.divider()
                 st.subheader("Saved Files")
                 
+                # Request webViewLink alongside the file ID and Name
                 results = drive_service.files().list(
                     q=f"'{folder_id}' in parents and trashed=false",
-                    fields="files(id, name)"
+                    fields="files(id, name, webViewLink)"
                 ).execute()
                 
                 files = results.get('files', [])
@@ -156,11 +154,15 @@ def main():
                     for file_data in files:
                         file_name = file_data['name']
                         file_id = file_data['id']
+                        file_link = file_data.get('webViewLink', '#')
                         
-                        col1, col2 = st.columns([4, 1])
+                        # 3 columns for Name, View button, and Delete button
+                        col1, col2, col3 = st.columns([3, 1, 1])
                         col1.write(f"📄 {file_name}")
                         
-                        if col2.button("Delete", key=f"del_{file_id}"):
+                        col2.link_button("View File", file_link)
+                        
+                        if col3.button("Delete", key=f"del_{file_id}"):
                             drive_service.files().delete(fileId=file_id).execute()
                             st.rerun()
 
