@@ -4,6 +4,7 @@ from PIL import Image, ImageOps
 from tensorflow.keras.models import load_model
 import json
 import io
+import os
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -53,6 +54,7 @@ def main():
                 class_name = labels[index].strip()
                 confidence_score = prediction[0][index]
                 
+                # Make sure this matches your labels.txt!
                 TARGET_CLASS = "0 Class 1"  
                 
                 if TARGET_CLASS in class_name and confidence_score > 0.85:
@@ -89,39 +91,42 @@ def main():
             redirect_uri = st.secrets["REDIRECT_URI"]
             folder_id = st.secrets["DRIVE_FOLDER_ID"]
             
-            # Setup OAuth Flow
             flow = Flow.from_client_config(
                 oauth_json,
                 scopes=['https://www.googleapis.com/auth/drive'],
                 redirect_uri=redirect_uri
             )
             
-            # Catch the return code from Google after login
             if "code" in st.query_params:
-                # Retrieve the code verifier from session memory
-                if "code_verifier" in st.session_state:
-                    flow.code_verifier = st.session_state["code_verifier"]
-                    
+                # 1. Retrieve the verifier from the physical text file
+                if os.path.exists("verifier.txt"):
+                    with open("verifier.txt", "r") as f:
+                        flow.code_verifier = f.read()
+                        
                 flow.fetch_token(code=st.query_params["code"])
                 st.session_state["google_creds"] = flow.credentials
                 st.query_params.clear()
                 st.rerun()
                 
-            # If not logged into Google yet, show the login button
             if "google_creds" not in st.session_state:
                 auth_url, _ = flow.authorization_url(prompt='consent')
-                # Save the code verifier to session memory before clicking the link
-                st.session_state["code_verifier"] = flow.code_verifier
+                
+                # 2. Save the verifier to a physical file before clicking the link
+                with open("verifier.txt", "w") as f:
+                    f.write(flow.code_verifier)
                 
                 st.info("You must link your Google Account to upload files.")
-                st.link_button("🔐 Log in with Google", auth_url)
                 
-            # If logged in, show the uploader and files
+                # 3. Custom button that opens in the SAME tab to prevent memory wipe
+                st.markdown(
+                    f'<a href="{auth_url}" target="_self" style="display: inline-block; padding: 10px 20px; background-color: #4285F4; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">🔐 Log in with Google</a>', 
+                    unsafe_allow_html=True
+                )
+                
             else:
                 creds = st.session_state["google_creds"]
                 drive_service = build('drive', 'v3', credentials=creds)
                 
-                # 1. FILE UPLOADER
                 uploaded_file = st.file_uploader("Select a file to upload")
                 if uploaded_file is not None:
                     if st.button("Save to Drive"):
@@ -140,8 +145,6 @@ def main():
                             st.rerun()
 
                 st.divider()
-                
-                # 2. FILE VIEWER & DELETER
                 st.subheader("Saved Files")
                 
                 results = drive_service.files().list(
