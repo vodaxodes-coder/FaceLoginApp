@@ -4,7 +4,9 @@ from PIL import Image, ImageOps
 from tensorflow.keras.models import load_model
 import json
 import io
-from google.oauth2 import service_account
+import os
+from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
@@ -85,60 +87,95 @@ def main():
         st.write("Securely upload reports and documents to Google Drive.")
         
         try:
-            # 1. Load Bot Credentials behind the scenes
-            creds_json = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
             folder_id = st.secrets["DRIVE_FOLDER_ID"]
             
-            creds = service_account.Credentials.from_service_account_info(
-                creds_json, 
-                scopes=['https://www.googleapis.com/auth/drive']
-            )
-            drive_service = build('drive', 'v3', credentials=creds)
-            
-            # 2. FILE UPLOADER
-            uploaded_file = st.file_uploader("Select a file to upload")
-            if uploaded_file is not None:
-                if st.button("Save to Drive"):
-                    with st.spinner("Uploading to Google Drive..."):
-                        file_bytes = uploaded_file.getvalue()
-                        file_metadata = {'name': uploaded_file.name, 'parents': [folder_id]}
-                        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=uploaded_file.type, resumable=True)
-                        
-                        drive_service.files().create(
-                            body=file_metadata, 
-                            media_body=media, 
-                            fields='id'
-                        ).execute()
-                        
-                        st.success(f"'{uploaded_file.name}' saved to Drive!")
-                        st.rerun()
+            # --- AUTO-LOGIN IF PERMANENT KEY EXISTS ---
+            if "GOOGLE_TOKEN_JSON" in st.secrets:
+                creds_data = json.loads(st.secrets["GOOGLE_TOKEN_JSON"])
+                creds = Credentials.from_authorized_user_info(creds_data, scopes=['https://www.googleapis.com/auth/drive'])
+                drive_service = build('drive', 'v3', credentials=creds)
+                
+                # FILE UPLOADER
+                uploaded_file = st.file_uploader("Select a file to upload")
+                if uploaded_file is not None:
+                    if st.button("Save to Drive"):
+                        with st.spinner("Uploading to Google Drive..."):
+                            file_bytes = uploaded_file.getvalue()
+                            file_metadata = {'name': uploaded_file.name, 'parents': [folder_id]}
+                            media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=uploaded_file.type, resumable=True)
+                            
+                            drive_service.files().create(
+                                body=file_metadata, 
+                                media_body=media, 
+                                fields='id'
+                            ).execute()
+                            
+                            st.success(f"'{uploaded_file.name}' saved to Drive!")
+                            st.rerun()
 
-            st.divider()
-            st.subheader("Saved Files")
-            
-            # 3. Request webViewLink alongside the file ID and Name
-            results = drive_service.files().list(
-                q=f"'{folder_id}' in parents and trashed=false",
-                fields="files(id, name, webViewLink)"
-            ).execute()
-            
-            files = results.get('files', [])
-            
-            if not files:
-                st.info("Your Google Drive folder is currently empty.")
+                st.divider()
+                st.subheader("Saved Files")
+                
+                results = drive_service.files().list(
+                    q=f"'{folder_id}' in parents and trashed=false",
+                    fields="files(id, name, webViewLink)"
+                ).execute()
+                
+                files = results.get('files', [])
+                
+                if not files:
+                    st.info("Your Google Drive folder is currently empty.")
+                else:
+                    for file_data in files:
+                        file_name = file_data['name']
+                        file_id = file_data['id']
+                        file_link = file_data.get('webViewLink', '#')
+                        
+                        col1, col2, col3 = st.columns([3, 1, 1])
+                        col1.write(f"📄 {file_name}")
+                        col2.link_button("View File", file_link)
+                        
+                        if col3.button("Delete", key=f"del_{file_id}"):
+                            drive_service.files().delete(fileId=file_id).execute()
+                            st.rerun()
+
+            # --- IF NO PERMANENT KEY, SHOW GENERATOR ---
             else:
-                for file_data in files:
-                    file_name = file_data['name']
-                    file_id = file_data['id']
-                    file_link = file_data.get('webViewLink', '#')
+                st.warning("⚠️ Permanent bot key not found. Let's generate one.")
+                
+                oauth_json = json.loads(st.secrets["GOOGLE_OAUTH_JSON"])
+                redirect_uri = st.secrets["REDIRECT_URI"]
+                
+                flow = Flow.from_client_config(
+                    oauth_json,
+                    scopes=['https://www.googleapis.com/auth/drive'],
+                    redirect_uri=redirect_uri
+                )
+                
+                if "code" in st.query_params:
+                    if os.path.exists("verifier.txt"):
+                        with open("verifier.txt", "r") as f:
+                            flow.code_verifier = f.read()
+                            
+                    flow.fetch_token(code=st.query_params["code"])
+                    st.session_state["google_creds"] = flow.credentials
+                    st.query_params.clear()
+                    st.rerun()
                     
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    col1.write(f"📄 {file_name}")
-                    col2.link_button("View File", file_link)
+                if "google_creds" not in st.session_state:
+                    # access_type='offline' forces Google to generate a permanent refresh token
+                    auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
                     
-                    if col3.button("Delete", key=f"del_{file_id}"):
-                        drive_service.files().delete(fileId=file_id).execute()
-                        st.rerun()
+                    with open("verifier.txt", "w") as f:
+                        f.write(flow.code_verifier)
+                    
+                    st.link_button("🔐 Log in to generate Permanent Key", auth_url)
+                    
+                else:
+                    creds = st.session_state["google_creds"]
+                    st.success("✅ Success! Here is your permanent key:")
+                    st.code(creds.to_json(), language="json")
+                    st.info("Copy ALL the code above. Go to your Streamlit Secrets, create a new variable called `GOOGLE_TOKEN_JSON = '''paste-code-here'''` and save. The app will then run automatically forever!")
 
         except Exception as e:
             st.error(f"⚠️ Drive connection error: {e}")
