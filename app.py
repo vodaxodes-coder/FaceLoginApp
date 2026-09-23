@@ -4,7 +4,7 @@ from PIL import Image, ImageOps
 from tensorflow.keras.models import load_model
 import json
 import io
-from google.oauth2.service_account import Credentials
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
@@ -19,16 +19,6 @@ def load_tm_model():
         labels = f.readlines()
     return model, labels
 
-# --- GOOGLE DRIVE INITIALIZATION ---
-@st.cache_resource
-def init_drive():
-    # Load the JSON credentials from Streamlit Secrets
-    creds_dict = json.loads(st.secrets["GOOGLE_JSON"])
-    scopes = ['https://www.googleapis.com/auth/drive']
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    service = build('drive', 'v3', credentials=creds)
-    return service
-
 def preprocess_image(image_data):
     image = Image.open(image_data).convert("RGB")
     size = (224, 224)
@@ -40,7 +30,7 @@ def preprocess_image(image_data):
     return data
 
 def main():
-    st.set_page_config(page_title="My Face Login", layout="centered")
+    st.set_page_config(page_title="Best Buy Secure Portal", layout="centered")
 
     # ==========================================
     #             SECURITY WALL
@@ -63,7 +53,6 @@ def main():
                 class_name = labels[index].strip()
                 confidence_score = prediction[0][index]
                 
-                # Make sure this matches your labels.txt exactly!
                 TARGET_CLASS = "0 Class 1"  
                 
                 if TARGET_CLASS in class_name and confidence_score > 0.85:
@@ -92,63 +81,85 @@ def main():
     if st.session_state['authenticated']:
         st.sidebar.button("Log out", on_click=lambda: st.session_state.update({'authenticated': False}))
         
-        st.title("📁 Google Drive Manager")
-        st.write("Files uploaded here are saved directly to your Google Drive folder.")
+        st.title("📁 Best Buy File Manager")
+        st.write("Securely upload reports and documents to Google Drive.")
         
         try:
-            drive_service = init_drive()
+            oauth_json = json.loads(st.secrets["GOOGLE_OAUTH_JSON"])
+            redirect_uri = st.secrets["REDIRECT_URI"]
             folder_id = st.secrets["DRIVE_FOLDER_ID"]
-
-            # 1. FILE UPLOADER
-            uploaded_file = st.file_uploader("Select a file to upload")
-            if uploaded_file is not None:
-                if st.button("Save to Drive"):
-                    with st.spinner("Uploading to Google Drive..."):
-                        file_bytes = uploaded_file.getvalue()
-                        
-                        # Prepare the file metadata and media buffer for Google Drive
-                        file_metadata = {'name': uploaded_file.name, 'parents': [folder_id]}
-                        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=uploaded_file.type, resumable=True)
-                        
-                        drive_service.files().create(
-                            body=file_metadata, 
-                            media_body=media, 
-                            fields='id'
-                        ).execute()
-                        
-                        st.success(f"'{uploaded_file.name}' saved to Drive!")
-                        st.rerun()
-
-            st.divider()
             
-            # 2. FILE VIEWER & DELETER
-            st.subheader("Saved Files")
+            # Setup OAuth Flow
+            flow = Flow.from_client_config(
+                oauth_json,
+                scopes=['https://www.googleapis.com/auth/drive'],
+                redirect_uri=redirect_uri
+            )
             
-            # Ask Google Drive for a list of all files inside your specific folder ID
-            results = drive_service.files().list(
-                q=f"'{folder_id}' in parents and trashed=false",
-                fields="files(id, name)"
-            ).execute()
-            
-            files = results.get('files', [])
-            
-            if not files:
-                st.info("Your Google Drive folder is currently empty.")
+            # Catch the return code from Google after login
+            if "code" in st.query_params:
+                flow.fetch_token(code=st.query_params["code"])
+                st.session_state["google_creds"] = flow.credentials
+                st.query_params.clear()
+                st.rerun()
+                
+            # If not logged into Google yet, show the login button
+            if "google_creds" not in st.session_state:
+                auth_url, _ = flow.authorization_url(prompt='consent')
+                st.info("You must link your Google Account to upload files.")
+                st.link_button("🔐 Log in with Google", auth_url)
+                
+            # If logged in, show the uploader and files
             else:
-                for file_data in files:
-                    file_name = file_data['name']
-                    file_id = file_data['id']
-                    
-                    col1, col2 = st.columns([4, 1])
-                    col1.write(f"📄 {file_name}")
-                    
-                    if col2.button("Delete", key=f"del_{file_id}"):
-                        drive_service.files().delete(fileId=file_id).execute()
-                        st.rerun()
+                creds = st.session_state["google_creds"]
+                drive_service = build('drive', 'v3', credentials=creds)
+                
+                # 1. FILE UPLOADER
+                uploaded_file = st.file_uploader("Select a file to upload")
+                if uploaded_file is not None:
+                    if st.button("Save to Drive"):
+                        with st.spinner("Uploading to Google Drive..."):
+                            file_bytes = uploaded_file.getvalue()
+                            file_metadata = {'name': uploaded_file.name, 'parents': [folder_id]}
+                            media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=uploaded_file.type, resumable=True)
+                            
+                            drive_service.files().create(
+                                body=file_metadata, 
+                                media_body=media, 
+                                fields='id'
+                            ).execute()
+                            
+                            st.success(f"'{uploaded_file.name}' saved to Drive!")
+                            st.rerun()
+
+                st.divider()
+                
+                # 2. FILE VIEWER & DELETER
+                st.subheader("Saved Files")
+                
+                results = drive_service.files().list(
+                    q=f"'{folder_id}' in parents and trashed=false",
+                    fields="files(id, name)"
+                ).execute()
+                
+                files = results.get('files', [])
+                
+                if not files:
+                    st.info("Your Google Drive folder is currently empty.")
+                else:
+                    for file_data in files:
+                        file_name = file_data['name']
+                        file_id = file_data['id']
+                        
+                        col1, col2 = st.columns([4, 1])
+                        col1.write(f"📄 {file_name}")
+                        
+                        if col2.button("Delete", key=f"del_{file_id}"):
+                            drive_service.files().delete(fileId=file_id).execute()
+                            st.rerun()
 
         except Exception as e:
             st.error(f"⚠️ Drive connection error: {e}")
-            st.write("Ensure your GOOGLE_JSON and DRIVE_FOLDER_ID are correct in Streamlit Secrets.")
 
 if __name__ == "__main__":
     main()
