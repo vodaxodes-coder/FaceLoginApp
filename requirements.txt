@@ -2,3 +2,5 @@ streamlit
 tensorflow-cpu==2.15.0
 Pillow
 numpy
+google-api-python-client
+google-auth
