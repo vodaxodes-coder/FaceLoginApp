@@ -33,30 +33,50 @@ def main():
     # --- THIS IS THE SECURITY WALL ---
     if st.session_state['authenticated'] == False:
         st.title("🔒 Security Wall")
-        st.write("Take a picture of your face to unlock the app.")
         
-        # Opens the webcam
-        camera_img = st.camera_input("Click 'Take Photo'")
+        # Create two tabs for the different login methods
+        tab1, tab2 = st.tabs(["📷 Face Scan", "🔑 Use Credentials"])
         
-        if camera_img is not None:
-            model, labels = load_tm_model()
-            processed_data = preprocess_image(camera_img)
+        # --- TAB 1: AI CAMERA LOGIN ---
+        with tab1:
+            st.write("Take a picture of your face to unlock the app.")
+            camera_img = st.camera_input("Click 'Take Photo'")
             
-            # The AI guesses who is in the photo
-            prediction = model.predict(processed_data)
-            index = np.argmax(prediction)
-            class_name = labels[index].strip()
-            confidence_score = prediction[0][index]
+            if camera_img is not None:
+                model, labels = load_tm_model()
+                processed_data = preprocess_image(camera_img)
+                
+                prediction = model.predict(processed_data)
+                index = np.argmax(prediction)
+                class_name = labels[index].strip()
+                confidence_score = prediction[0][index]
+                
+                # >>> CHANGE THIS LINE to match what is inside your labels.txt file! <<<
+                TARGET_CLASS = "0 Class 1"  
+                
+                if TARGET_CLASS in class_name and confidence_score > 0.85:
+                    st.success("Face recognized! Unlocking...")
+                    st.session_state['authenticated'] = True
+                    st.rerun() 
+                else:
+                    st.error("Face not recognized. Access Denied.")
+
+        # --- TAB 2: PASSWORD LOGIN ---
+        with tab2:
+            st.write("Enter your ID and Password to bypass the camera.")
             
-            # >>> CHANGE THIS LINE to match what is inside your labels.txt file! <<<
-            TARGET_CLASS = "0 Class 1"  
+            # Text inputs for the credentials
+            user_id = st.text_input("ID")
+            # type="password" hides the characters as they are typed
+            user_pw = st.text_input("Password", type="password") 
             
-            if TARGET_CLASS in class_name and confidence_score > 0.85:
-                st.success("Face recognized! Unlocking...")
-                st.session_state['authenticated'] = True
-                st.rerun() # Refreshes the page to show the secret content
-            else:
-                st.error("Face not recognized. Access Denied.")
+            if st.button("Log In"):
+                if user_id == "parikhshitkochar" and user_pw == "BONd2983":
+                    st.success("Credentials accepted! Unlocking...")
+                    st.session_state['authenticated'] = True
+                    st.rerun()
+                else:
+                    st.error("Incorrect ID or Password. Access Denied.")
 
     # --- THIS IS THE SECRET APP CONTENT ---
     if st.session_state['authenticated'] == True:
