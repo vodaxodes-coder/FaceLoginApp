@@ -98,6 +98,10 @@ def main():
             
             # Catch the return code from Google after login
             if "code" in st.query_params:
+                # Retrieve the code verifier from session memory
+                if "code_verifier" in st.session_state:
+                    flow.code_verifier = st.session_state["code_verifier"]
+                    
                 flow.fetch_token(code=st.query_params["code"])
                 st.session_state["google_creds"] = flow.credentials
                 st.query_params.clear()
@@ -106,6 +110,9 @@ def main():
             # If not logged into Google yet, show the login button
             if "google_creds" not in st.session_state:
                 auth_url, _ = flow.authorization_url(prompt='consent')
+                # Save the code verifier to session memory before clicking the link
+                st.session_state["code_verifier"] = flow.code_verifier
+                
                 st.info("You must link your Google Account to upload files.")
                 st.link_button("🔐 Log in with Google", auth_url)
                 
